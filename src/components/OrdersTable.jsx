@@ -1,9 +1,10 @@
 import { useOrders } from '../context/OrderContext';
 import StatusDropdown from './StatusDropdown';
 import { format } from 'date-fns';
+import { getGoogleMapsUrl } from '../services/orderService';
 
 function OrdersTable() {
-  const { orders, updateOrderStatus } = useOrders();
+  const { orders, updateOrderStatus, loading } = useOrders();
 
   // Filter to show only orders with status 'orders' (not delivered)
   const pendingOrders = orders.filter(order => order.status === 'orders');
@@ -21,10 +22,19 @@ function OrdersTable() {
     updateOrderStatus(orderId, newStatus);
   };
 
-  // Generate Google Maps URL from address
-  const getGoogleMapsUrl = (address) => {
-    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
-  };
+  if (loading) {
+    return (
+      <div className="bg-white rounded-xl border border-yellow-200 shadow-lg overflow-hidden">
+        <div className="p-6 border-b border-yellow-200 bg-yellow-50">
+          <h2 className="text-lg font-semibold text-gray-800">Pending Orders</h2>
+        </div>
+        <div className="px-6 py-12 text-center text-gray-500">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yellow-500 mx-auto mb-4"></div>
+          Loading orders from Firebase...
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white rounded-xl border border-yellow-200 shadow-lg overflow-hidden">
@@ -32,6 +42,9 @@ function OrdersTable() {
         <h2 className="text-lg font-semibold text-gray-800">
           Pending Orders ({pendingOrders.length})
         </h2>
+        <p className="text-sm text-gray-500 mt-1">
+          Real-time orders from WayToForm app
+        </p>
       </div>
 
       <div className="overflow-x-auto">
@@ -54,10 +67,10 @@ function OrdersTable() {
                 Phone
               </th>
               <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">
-                Order Date
+                Amount
               </th>
               <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">
-                Order Received
+                Order Date
               </th>
               <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">
                 Status
@@ -81,7 +94,7 @@ function OrdersTable() {
                 </td>
                 <td className="px-6 py-4 text-sm max-w-[200px]">
                   <a
-                    href={getGoogleMapsUrl(order.deliveryAddress)}
+                    href={getGoogleMapsUrl(order)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
@@ -97,15 +110,11 @@ function OrdersTable() {
                     {order.customerPhone}
                   </a>
                 </td>
+                <td className="px-6 py-4 text-sm text-gray-800 font-medium">
+                  ₹{order.amount}
+                </td>
                 <td className="px-6 py-4 text-sm text-gray-600">
                   {formatDate(order.createdAt)}
-                </td>
-                <td className="px-6 py-4 text-sm">
-                  {order.receivedAt ? (
-                    <span className="text-yellow-600">{formatDate(order.receivedAt)}</span>
-                  ) : (
-                    <span className="text-gray-400">-</span>
-                  )}
                 </td>
                 <td className="px-6 py-4">
                   <StatusDropdown

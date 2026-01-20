@@ -1,63 +1,94 @@
-import { createContext, useContext, useState, useCallback } from 'react';
-import { initialOrders, initialHistory } from '../data/mockData';
+import { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { subscribeToOrders, updateOrderStatus as updateFirebaseStatus } from '../services/orderService';
 
 const OrderContext = createContext();
 
 export function OrderProvider({ children }) {
-  const [orders, setOrders] = useState(initialOrders);
-  const [orderHistory, setOrderHistory] = useState(initialHistory);
-  const [historyIdCounter, setHistoryIdCounter] = useState(initialHistory.length + 1);
+  const [orders, setOrders] = useState([]);
+  const [orderHistory, setOrderHistory] = useState([]);
+  const [historyIdCounter, setHistoryIdCounter] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Subscribe to Firebase orders on mount
+  useEffect(() => {
+    console.log('Subscribing to Firebase orders...');
+    setLoading(true);
+    setError(null);
+
+    const unsubscribe = subscribeToOrders(
+      (firebaseOrders) => {
+        console.log('Orders received:', firebaseOrders.length);
+        setOrders(firebaseOrders);
+        setLoading(false);
+        setError(null);
+      },
+      (err) => {
+        console.error('Firebase subscription error:', err);
+        setError(err.message || 'Failed to load orders');
+        setLoading(false);
+      }
+    );
+
+    // Cleanup subscription on unmount
+    return () => {
+      console.log('Unsubscribing from Firebase orders');
+      unsubscribe();
+    };
+  }, []);
 
   // Update order status and automatically add to history
-  const updateOrderStatus = useCallback((orderId, newStatus, changeReason = '') => {
-    setOrders(prevOrders => {
-      const orderIndex = prevOrders.findIndex(o => o.id === orderId);
-      if (orderIndex === -1) return prevOrders;
+  const updateOrderStatus = useCallback(async (orderId, newStatus, changeReason = '') => {
+    // Find the order
+    const order = orders.find(o => o.id === orderId);
+    if (!order) return;
 
-      const order = prevOrders[orderIndex];
-      const previousStatus = order.status;
+    const previousStatus = order.status;
 
-      // Don't update if status is the same
-      if (previousStatus === newStatus) return prevOrders;
+    // Don't update if status is the same
+    if (previousStatus === newStatus) return;
 
-      // Create updated order with timestamps
+    // Update in Firebase
+    const success = await updateFirebaseStatus(orderId, newStatus);
+
+    if (success) {
+      // Update local state immediately for better UX
       const now = new Date().toISOString();
-      const updatedOrder = {
-        ...order,
-        status: newStatus,
-        updatedAt: now,
-        // Auto-set receivedAt when status is 'orders' (order received)
-        receivedAt: newStatus === 'orders' && !order.receivedAt ? now : order.receivedAt,
-        // Auto-set deliveredAt when status changes to delivered
-        deliveredAt: newStatus === 'delivered' && !order.deliveredAt ? now : order.deliveredAt
-      };
+
+      setOrders(prevOrders => {
+        return prevOrders.map(o => {
+          if (o.id === orderId) {
+            return {
+              ...o,
+              status: newStatus,
+              updatedAt: now,
+              receivedAt: newStatus === 'orders' && !o.receivedAt ? now : o.receivedAt,
+              deliveredAt: newStatus === 'delivered' && !o.deliveredAt ? now : o.deliveredAt
+            };
+          }
+          return o;
+        });
+      });
 
       // Add to order history
       const historyEntry = {
         id: historyIdCounter,
-        orderId: order.id,
+        orderId: orderId,
         orderNumber: order.orderNumber,
         previousStatus,
         newStatus,
         changedBy: 'Admin',
         changeReason,
-        createdAt: new Date().toISOString()
+        createdAt: now
       };
 
       setHistoryIdCounter(prev => prev + 1);
       setOrderHistory(prev => [historyEntry, ...prev]);
+    }
+  }, [orders, historyIdCounter]);
 
-      // Return updated orders array
-      const newOrders = [...prevOrders];
-      newOrders[orderIndex] = updatedOrder;
-      return newOrders;
-    });
-  }, [historyIdCounter]);
-
-  // Refresh orders (simulate API call)
+  // Refresh orders (Firebase will auto-update, but this can force re-render)
   const refreshOrders = useCallback(() => {
-    // In a real app, this would fetch from API
-    // For demo, we just trigger a re-render
     setOrders(prev => [...prev]);
   }, []);
 
@@ -66,30 +97,14 @@ export function OrderProvider({ children }) {
     return orderHistory.filter(h => h.orderId === orderId);
   }, [orderHistory]);
 
-  // Add new order
-  const addOrder = useCallback((orderData) => {
-    const now = new Date().toISOString();
-    const newOrder = {
-      id: orders.length + 1,
-      orderNumber: `ORD-${String(orders.length + 1).padStart(3, '0')}`,
-      status: 'orders',
-      createdAt: now,
-      receivedAt: now,
-      deliveredAt: null,
-      updatedAt: now,
-      ...orderData
-    };
-    setOrders(prev => [newOrder, ...prev]);
-    return newOrder;
-  }, [orders.length]);
-
   const value = {
     orders,
     orderHistory,
     updateOrderStatus,
     refreshOrders,
     getOrderHistory,
-    addOrder
+    loading,
+    error
   };
 
   return (
